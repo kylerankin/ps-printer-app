@@ -67,6 +67,10 @@ export:
 verify-core:
     IMAGE="{{ image_ref }}" tests/core-appliance.sh
 
+# PDF to vector PostScript, and HPLIP hpps PIN jobs, printed through to a socket sink.
+verify-routes:
+    IMAGE="{{ image_ref }}" tests/print-routes.sh
+
 # Driver and PPD payload, and the web-interface test page through the socket backend.
 verify-payload:
     IMAGE="{{ image_ref }}" tests/core-payload.sh
@@ -109,6 +113,7 @@ verify:
     just verify-contract
     just verify-no-devel
     just verify-core
+    just verify-routes
     just verify-payload
     just verify-pin
     just verify-instances

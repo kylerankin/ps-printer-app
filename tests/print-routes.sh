@@ -1,246 +1,342 @@
 #!/usr/bin/env bash
 #
-# Real-image print-to-socket-sink verification for ps-printer-app.
+# Print-route verification for the ps-printer-app FSDK OCI image
+# (projectbluefin/ps-printer-app#10).
 #
-# Exercises the two routes requested in ps-printer-app#10 against the built
-# OCI image, with no physical printer and no synthetic mock echoes:
+# Drives the two filter routes the issue names through the built image, with
+# the CUPS socket backend writing to a TCP sink on the host:
 #
-#   Route A  PDF -> PostScript vector. A PDF test document is printed through
-#            the built image to a socket sink and the output is asserted to be
-#            structurally valid PostScript (the pdftops / ps2write vector path,
-#            never a raster mock).
+#   Route A  PDF -> PostScript vector. A generated PDF is submitted over IPP to
+#            a printer on the generic PostScript driver. The job must complete,
+#            run pdftops and no raster filter, and deliver structurally valid
+#            PostScript: a %!PS-Adobe header, one page and a %%EOF trailer.
 #
-#   Route B  HPLIP PIN (hpps) route. The packaged hpps filter and an HPLIP
-#            PostScript PPD are confirmed present, a job is printed through that
-#            route to a socket sink, and a PIN-configured job is shown to carry
-#            an observable difference from a plain job (hpps engages).
+#   Route B  HPLIP hpps secure (PIN) printing. A printer is added with an HPLIP
+#            PostScript PPD whose *cupsFilter is hpps and which declares the
+#            HPPinPrnt and HPFIDigit..HPFTDigit PIN options. A plain job and a
+#            PIN job must both complete through hpps; only the PIN job may
+#            carry hpps' @PJL SET HOLD=ON / HOLDTYPE=PRIVATE / HOLDKEY=<pin>
+#            lines. The application log, at the Informational level, must
+#            record the hpps run of the PIN job and none of its PIN options,
+#            and the container log must not carry them either.
 #
-# Builds nothing here: the CI workflow loads the freshly built rock into podman
-# and passes it via $IMAGE. Only the shipped image runs. Physical paper output
-# remains unverified (no hardware).
+# Physical paper output is not verified: no printer hardware is available.
+#
+# Environment:
+#   IMAGE  image to verify (default ghcr.io/projectbluefin/ps-printer-app:build,
+#          the tag `just build` produces)
+#   NAME   container name (default ps-printer-app-routes)
+#   PORT   printer application port (default 18060); the sinks use PORT+1
+#          (Route A) and PORT+2 (Route B)
 set -euo pipefail
 
-IMAGE="${IMAGE:-ps-printer-app:build}"
-NAME="ps-printer-app-payload"
-PORT="${PORT:-18000}"
-A_SINK_PORT="$((PORT + 1))"     # Route A output sink
-B_BASE_SINK_PORT="$((PORT + 2))" # Route B plain-job sink
-B_PIN_SINK_PORT="$((PORT + 3))"  # Route B PIN-job sink
-STATE_DIR="$(mktemp -d)"
-WORK_DIR="$(mktemp -d)"
-A_OUT="$WORK_DIR/route-a.ps"
-B_BASE_OUT="$WORK_DIR/route-b-base.ps"
-B_PIN_OUT="$WORK_DIR/route-b-pin.ps"
-SINK_PIDS=()
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+image="${IMAGE:-ghcr.io/projectbluefin/ps-printer-app:build}"
+name="${NAME:-ps-printer-app-routes}"
+port="${PORT:-18060}"
+pdf_sink_port="$((port + 1))"
+hpps_sink_port="$((port + 2))"
 
-log() { printf '%s\n' "$*"; }
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+pdf_printer="route-pdf"
+hpps_printer="route-hpps"
+# HP Color LaserJet M553: *cupsFilter "application/vnd.cups-postscript 0 hpps",
+# secure printing through HPPinPrnt and the four HPFIDigit..HPFTDigit digits.
+hpps_ppd="hplip-ps-ppds:0/hp-color_laserjet_m553-ps.ppd"
+hpps_driver="hp--color-laserjet-m-553--recommended-en"
+# The application's IPP names for HPPinPrnt and the four digit options.
+pin_digits=(5 8 3 6)
+pin="5836"
+pin_attributes=(
+  secure-printing=on
+  "first-digit=${pin_digits[0]}"
+  "second-digit=${pin_digits[1]}"
+  "third-digit=${pin_digits[2]}"
+  "fourth-digit=${pin_digits[3]}"
+)
+
+state_dir="$(mktemp -d)"
+work_dir="$(mktemp -d)"
+sink_pid=""
+
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 cleanup() {
-  podman rm -f "$NAME" >/dev/null 2>&1 || true
-  local p
-  for p in "${SINK_PIDS[@]:-}"; do
-    kill "$p" >/dev/null 2>&1 || true
-    wait "$p" 2>/dev/null || true
-  done
-  podman unshare rm -rf "$STATE_DIR" 2>/dev/null || true
-  rm -rf "$WORK_DIR"
+  podman rm -f "$name" >/dev/null 2>&1 || true
+  if [[ -n "$sink_pid" ]]; then
+    kill "$sink_pid" >/dev/null 2>&1 || true
+    wait "$sink_pid" 2>/dev/null || true
+  fi
+  podman unshare rm -rf "$state_dir" >/dev/null 2>&1 || true
+  rm -rf "$state_dir" "$work_dir"
 }
 trap cleanup EXIT
 
-# --- a minimal but valid PDF that pdftops can convert ---------------------
-make_pdf() {
-  python3 - "$WORK_DIR/testpage.pdf" <<'PY'
-import sys
-body = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
-objs = [
-    b"<< /Type /Catalog /Pages 2 0 R >>",
-    b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-    b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
-    b"<< /Length 47 >>\nstream\nBT /F1 24 Tf 100 700 Td (PDFtoPS) Tj ET\nendstream",
-    b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-]
-offsets = []
-for i, o in enumerate(objs, start=1):
-    offsets.append(len(body))
-    body += f"{i} 0 obj\n".encode() + o + b"\nendobj\n"
-xref_pos = len(body)
-size = len(objs) + 1
-body += f"xref\n0 {size}\n0000000000 65535 f \n".encode()
-for off in offsets:
-    body += f"{off:010d} 00000 n \n".encode()
-body += (f"trailer\n<< /Size {size} /Root 1 0 R >>\n"
-         f"startxref\n{xref_pos}\n%%EOF").encode()
-open(sys.argv[1], "wb").write(body)
-PY
-  test -s "$WORK_DIR/testpage.pdf" || fail "could not generate the PDF test document"
-}
-
-# --- wait for the image web server to answer ------------------------------
-wait_ready() {
-  for _ in $(seq 1 180); do
-    if curl --fail --silent --show-error "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
+wait_for_http() {
+  local response
+  for _ in $(seq 1 60); do
+    if response="$(curl --fail --silent --show-error "http://127.0.0.1:${port}/" 2>/dev/null)" &&
+      [[ "$response" == *'<title>PostScript Printer Application</title>'* ]]; then
       return 0
     fi
     sleep 1
   done
-  podman logs "$NAME" >&2 || true
-  fail "web server on port ${PORT} did not become ready"
+  return 1
 }
 
-# --- assert that captured bytes are structurally valid PostScript ---------
-assert_postscript() {
-  local label="$1" file="$2"
-  [[ -s "$file" ]] || fail "${label}: socket sink captured an empty job"
-  head -c 8 "$file" | grep -q '^%!PS' \
-    || fail "${label}: output is not PostScript (bad header: $(head -c 8 "$file"))"
-  grep -q '^%%EOF' "$file" \
-    || fail "${label}: PostScript output has no %%EOF trailer"
-  grep -qE 'Tf|show|Tj|Td' "$file" \
-    || fail "${label}: PostScript output has no content operators"
-  log "OK: ${label} -> $(( $(wc -c < "$file") )) bytes of valid PostScript"
-}
-
-# --- pick a PostScript driver from the image ------------------------------
-pick_driver() {
-  local drivers generic first
-  drivers="$(podman run --rm --entrypoint /usr/bin/bash "$IMAGE" -c \
-    'ps-printer-app drivers 2>/dev/null | tr -d " \r"' || true)"
-  [[ -n "$drivers" ]] || fail "image enumerates no drivers"
-  generic="$(printf '%s\n' "$drivers" | grep -i '^generic$' | head -n1 || true)"
-  first="$(printf '%s\n' "$drivers" | head -n1 || true)"
-  printf '%s' "${generic:-$first}"
-}
-
-# --- find an HPLIP PostScript PPD that declares the hpps PIN filter -------
-find_hpps_ppd() {
-  podman exec "$NAME" bash -c '
-    set -e
-    d="$(mktemp -d)"
-    ( cd "$d" && /usr/share/ppd/hplip-ps-ppds >/dev/null 2>&1 ) || exit 1
-    p="$(grep -rl "hpps" "$d" 2>/dev/null | grep -i "\.ppd$" | head -n1 || true)"
-    rc=1
-    if [[ -n "$p" ]]; then
-      basename "$p"
-      rc=0
+# First value of one attribute from an ipp-request.py response.
+ipp_value() {
+  local wanted="$1" line
+  while IFS= read -r line; do
+    if [[ "$line" == "$wanted="* ]]; then
+      line="${line#*=}"
+      printf '%s' "${line%%,*}"
+      return 0
     fi
-    rm -rf "$d"
-    exit $rc
-  ' || true
+  done
+  return 1
 }
 
-start_sink() {  # <port> <outfile>
-  python3 tests/socket-sink.py "$1" "$2" &
-  SINK_PIDS+=("$!")
+app_log() {
+  podman exec "$name" /usr/bin/cat /var/lib/ps-printer-app/ps-printer-app.log
 }
 
-# ===========================================================================
-main() {
-  make_pdf
-  chmod 0777 "$STATE_DIR"
-
-  # --- start the image -----------------------------------------------------
-  podman run -d \
-    --name "$NAME" \
-    --network host \
-    -e PORT="$PORT" \
-    -v "$STATE_DIR:/var/lib/ps-printer-app:Z" \
-    "$IMAGE" >/dev/null
-  wait_ready
-
-  # ------------------------------------------------------------------------
-  log "===== Route A: PDF -> PostScript vector ====="
-  PS_DRIVER="$(pick_driver)"
-  [[ -n "$PS_DRIVER" ]] || fail "no PostScript driver available"
-  log "Using driver: $PS_DRIVER"
-  start_sink "$A_SINK_PORT" "$A_OUT"
-
-  podman exec "$NAME" ps-printer-app \
-    -u "cups:socket://127.0.0.1:${A_SINK_PORT}" \
-    -d pdf-ps -m "$PS_DRIVER" add \
-    || fail "could not add the Route A printer queue"
-
-  podman cp "$WORK_DIR/testpage.pdf" "$NAME:/tmp/testpage.pdf"
-  podman exec "$NAME" ps-printer-app \
-    -u "ipp://127.0.0.1:${PORT}/ipp/print/pdf-ps" \
-    submit /tmp/testpage.pdf \
-    || fail "Route A submit failed"
-
-  local got=0
-  for _ in $(seq 1 180); do
-    [[ -s "$A_OUT" ]] && { got=1; break; }
-    sleep 0.5
-  done
-  [[ "$got" -eq 1 ]] || { podman logs "$NAME" >&2; fail "Route A produced no socket output"; }
-  assert_postscript "Route A (PDF->PostScript)" "$A_OUT"
-
-  # ------------------------------------------------------------------------
-  log "===== Route B: HPLIP PIN (hpps) route ====="
-  podman exec "$NAME" test -x /usr/lib/ps-printer-app/filter/hpps \
-    || fail "packaged hpps filter not found in image"
-  log "OK: packaged hpps filter present at /usr/lib/ps-printer-app/filter/hpps"
-  podman exec "$NAME" test -f /usr/share/ppd/hplip-ps-ppds \
-    || fail "HPLIP PostScript PPD archive not found in image"
-  log "OK: HPLIP PostScript PPD archive present"
-
-  HPPS_PPD="$(find_hpps_ppd)"
-  if [[ -z "$HPPS_PPD" ]]; then
-    log "SKIP: no HPLIP PostScript PPD declares the hpps filter in this image; " \
-        "the hpps route cannot be exercised until one is present."
-    return 0
-  fi
-  HPPS_DRIVER="${HPPS_PPD%.ppd}"
-  log "Using HPLIP PIN driver: $HPPS_DRIVER"
-
-  start_sink "$B_BASE_SINK_PORT" "$B_BASE_OUT"
-  start_sink "$B_PIN_SINK_PORT" "$B_PIN_OUT"
-
-  if ! podman exec "$NAME" ps-printer-app \
-    -u "cups:socket://127.0.0.1:${B_BASE_SINK_PORT}" \
-    -d hplip-pin -m "$HPPS_DRIVER" add \
-  ; then
-    log "WARN: could not add the Route B printer queue with driver " \
-        "$HPPS_DRIVER; the hpps route cannot be exercised end-to-end " \
-        "(image already confirms the filter and PPD are present)."
-    return 0
-  fi
-
-  # Plain job through the HPLIP PS route.
-  podman exec "$NAME" ps-printer-app \
-    -u "ipp://127.0.0.1:${PORT}/ipp/print/hplip-pin" \
-    submit /tmp/testpage.pdf \
-    || fail "Route B plain-job submit failed"
-  local gotb=0
-  for _ in $(seq 1 180); do
-    [[ -s "$B_BASE_OUT" ]] && { gotb=1; break; }
-    sleep 0.5
-  done
-  [[ "$gotb" -eq 1 ]] || { podman logs "$NAME" >&2; fail "Route B produced no socket output"; }
-  assert_postscript "Route B (HPLIP PS route)" "$B_BASE_OUT"
-
-  # PIN-configured job: hpps must engage and change the output stream.
-  podman exec "$NAME" ps-printer-app \
-    -u "ipp://127.0.0.1:${PORT}/ipp/print/hplip-pin" \
-    -o cupsPin=1234 submit /tmp/testpage.pdf \
-    || log "WARN: PIN-configured submit was rejected by the queue"
-  local gotp=0
-  for _ in $(seq 1 180); do
-    [[ -s "$B_PIN_OUT" ]] && { gotp=1; break; }
-    sleep 0.5
-  done
-  if [[ "$gotp" -ne 1 ]]; then
-    log "OK: hpps held the PIN-protected job (no output reached the sink), " \
-        "which is the observable difference from the plain job"
-  else
-    assert_postscript "Route B (PIN job)" "$B_PIN_OUT"
-    if cmp -s "$B_BASE_OUT" "$B_PIN_OUT"; then
-      fail "Route B: PIN job output is byte-identical to the plain job; hpps did not engage"
-    fi
-    log "OK: PIN job output differs from the plain job (hpps engaged)"
-  fi
-
-  log "OK: ps-printer-app PDF->PostScript and HPLIP PIN route verification passed"
+add_printer() { # PRINTER DRIVER SINK_PORT
+  podman exec "$name" /usr/bin/ps-printer-app \
+    -u "ipp://127.0.0.1:${port}/ipp/system" \
+    -d "$1" \
+    -m "$2" \
+    -v "cups:socket://127.0.0.1:${3}" add ||
+    fail "could not add printer $1 with the $2 driver"
 }
 
-main "$@"
+# Submit FILE over IPP to PRINTER through a fresh socket sink on SINK_PORT and
+# wait for the job to complete and the sink to drain into OUTPUT.  Sets job_id
+# and job_log, the application log lines written since the submission (job ids
+# are per printer, so the log is scoped by time, not by id).  Extra arguments
+# are NAME=KEYWORD job attributes.
+print_job() { # PRINTER SINK_PORT OUTPUT FILE MIME_TYPE [NAME=KEYWORD ...]
+  local printer="$1" sink_port="$2" output="$3" file="$4" mime="$5"
+  shift 5
+  local uri="ipp://127.0.0.1:${port}/ipp/print/${printer}" response status job_state="" log_start
+  job_id=""
+  job_log=""
+  log_start="$(app_log | wc -l)"
+
+  python3 "$script_dir/socket-sink.py" "$sink_port" "$output" >"$output.sink-log" 2>&1 &
+  sink_pid=$!
+  sleep 1
+
+  response="$(python3 "$script_dir/ipp-request.py" "$uri" print-job "$file" "$mime" "$@")" ||
+    fail "Print-Job to $printer failed"
+  status="$(ipp_value status <<<"$response")"
+  job_id="$(ipp_value job-id <<<"$response")" || job_id=""
+  if [[ "$status" != 0x0000 && "$status" != 0x0001 ]] || [[ ! "$job_id" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$response" >&2
+    fail "Print-Job to $printer returned status $status and job-id '$job_id'"
+  fi
+
+  for _ in $(seq 1 120); do
+    job_state="$(python3 "$script_dir/ipp-request.py" "$uri" get-job-attributes "$job_id" | ipp_value job-state)" ||
+      job_state=""
+    # 9 completed, 7 canceled, 8 aborted (RFC 8011, section 5.3.7)
+    [[ "$job_state" == 7 || "$job_state" == 8 || "$job_state" == 9 ]] && break
+    sleep 0.5
+  done
+  if [[ "$job_state" != 9 ]]; then
+    app_log >&2 || true
+    cat "$output.sink-log" >&2 || true
+    fail "job $job_id on $printer ended in job-state '$job_state', expected 9 (completed)"
+  fi
+  for _ in $(seq 1 20); do
+    kill -0 "$sink_pid" 2>/dev/null || break
+    sleep 0.5
+  done
+  if kill -0 "$sink_pid" 2>/dev/null; then
+    fail "the socket sink for job $job_id on $printer never saw the connection close"
+  fi
+  wait "$sink_pid" || fail "the socket sink for job $job_id on $printer failed"
+  sink_pid=""
+  [[ -s "$output" ]] || fail "job $job_id on $printer delivered no bytes to the socket sink"
+  for _ in $(seq 1 20); do
+    job_log="$(app_log | tail -n "+$((log_start + 1))")"
+    [[ "$job_log" == *"[Job $job_id] Completed"* ]] && return 0
+    sleep 0.5
+  done
+  printf '%s\n' "$job_log" >&2
+  fail "the application log never records job $job_id on $printer completing"
+}
+
+# The PostScript document in OUTPUT, starting at its %!PS-Adobe header: the
+# bytes before it are the PJL preamble a driver may prepend.
+assert_postscript() { # LABEL OUTPUT
+  local label="$1" output="$2"
+  LC_ALL=C grep -aq '^%!PS-Adobe-3\.0' "$output" || fail "$label: no %!PS-Adobe-3.0 header"
+  LC_ALL=C grep -aq '^%%Pages: 1$' "$output" || fail "$label: the PostScript does not declare one page"
+  LC_ALL=C grep -aq '^%%Page: 1 1$' "$output" || fail "$label: the PostScript carries no page 1"
+  LC_ALL=C grep -aq 'showpage' "$output" || fail "$label: the PostScript never paints a page (no showpage)"
+  LC_ALL=C grep -aq '^%%EOF' "$output" || fail "$label: the PostScript has no %%EOF trailer"
+}
+
+# The PJL preamble of OUTPUT: every line before the PostScript header.
+pjl_header() {
+  LC_ALL=C awk '/^%!PS-Adobe/ { exit } { print }' "$1" | LC_ALL=C tr -d '\033\r'
+}
+
+for tool in podman curl python3 awk; do
+  command -v "$tool" >/dev/null 2>&1 || fail "required tool not found: $tool"
+done
+podman image inspect "$image" >/dev/null 2>&1 || fail "image $image not found; run just build first"
+
+# A one-page PDF with a line of Helvetica text, so that Route A has vector
+# content for pdftops to convert.
+python3 - "$work_dir/route.pdf" <<'PY'
+import sys
+
+content = b"BT /F1 24 Tf 72 700 Td (ps-printer-app print route) Tj ET"
+objects = [
+    b"<< /Type /Catalog /Pages 2 0 R >>",
+    b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+    b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
+    b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+]
+body = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+offsets = []
+for number, obj in enumerate(objects, start=1):
+    offsets.append(len(body))
+    body += b"%d 0 obj\n" % number + obj + b"\nendobj\n"
+xref = len(body)
+body += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+body += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+body += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+with open(sys.argv[1], "wb") as handle:
+    handle.write(body)
+PY
+
+echo "== Appliance start =="
+chmod 0777 "$state_dir"
+podman run -d \
+  --name "$name" \
+  --network host \
+  -e PORT="$port" \
+  -v "$state_dir:/var/lib/ps-printer-app:Z" \
+  "$image" >/dev/null
+if ! wait_for_http; then
+  podman logs "$name" >&2 || true
+  fail "web interface on port $port did not answer"
+fi
+
+# The default log level records errors only. Informational records each job's
+# filter chain, which is the evidence that a route ran the intended filters.
+cookie_file="$work_dir/cookies"
+logs_page="$(curl --fail --silent --show-error --cookie-jar "$cookie_file" "http://127.0.0.1:${port}/logs")" ||
+  fail "the web interface logs page did not answer"
+session="${logs_page#*name=\"session\" value=\"}"
+session="${session%%\"*}"
+[[ -n "$session" && "$session" != "$logs_page" ]] || fail "the logs page carries no web interface session token"
+curl --fail --silent --show-error \
+  --cookie "$cookie_file" \
+  --data-urlencode "session=$session" \
+  --data 'log_level=Informational' \
+  "http://127.0.0.1:${port}/logs" >/dev/null || fail "could not set the Informational log level"
+logs_page="$(curl --fail --silent --show-error "http://127.0.0.1:${port}/logs")"
+[[ "$logs_page" == *'<option value="Informational" selected'* ]] || fail "the log level did not change to Informational"
+echo "  ok: web interface answers, application log level set to Informational"
+
+echo "== Route A: PDF -> PostScript vector =="
+add_printer "$pdf_printer" generic "$pdf_sink_port"
+pdf_out="$work_dir/route-pdf.out"
+print_job "$pdf_printer" "$pdf_sink_port" "$pdf_out" "$work_dir/route.pdf" application/pdf
+pdf_job="$job_id"
+head -c 11 "$pdf_out" | LC_ALL=C grep -aq '^%!PS-Adobe-' ||
+  fail "Route A: the generic driver output does not start with a %!PS-Adobe header"
+assert_postscript "Route A" "$pdf_out"
+LC_ALL=C grep -aq '^%%Creator: GPL Ghostscript .*(ps2write)' "$pdf_out" ||
+  fail "Route A: the PostScript was not written by Ghostscript ps2write"
+pdf_log="$job_log"
+[[ "$pdf_log" == *"cfFilterChain: Running filter: pdftops"* ]] ||
+  { printf '%s\n' "$pdf_log" >&2; fail "Route A: job $pdf_job did not run pdftops"; }
+if grep -q 'Running filter: .*raster' <<<"$pdf_log"; then
+  printf '%s\n' "$pdf_log" >&2
+  fail "Route A: job $pdf_job rasterized the PDF instead of converting it to vector PostScript"
+fi
+echo "  ok: PDF job $pdf_job completed through pdftops (ps2write), $(wc -c <"$pdf_out") bytes of one-page PostScript"
+
+echo "== Route B: HPLIP hpps secure printing =="
+ppd="$(podman exec "$name" /usr/share/ppd/hplip-ps-ppds cat "$hpps_ppd")" ||
+  fail "the HPLIP PostScript PPD archive does not provide $hpps_ppd"
+grep -qx '\*cupsFilter: "application/vnd.cups-postscript 0 hpps"' <<<"$ppd" ||
+  fail "$hpps_ppd does not route through hpps"
+for option in HPPinPrnt HPFIDigit HPSEDigit HPTHDigit HPFTDigit; do
+  grep -q "^\*OpenUI \*${option}/" <<<"$ppd" || fail "$hpps_ppd does not declare the $option option"
+done
+nickname="$(grep -m1 '^\*NickName:' <<<"$ppd")" || fail "$hpps_ppd has no *NickName"
+nickname="${nickname#*\"}"
+nickname="${nickname%\"*}"
+podman exec "$name" /usr/bin/test -x /usr/lib/ps-printer-app/filter/hpps || fail "the hpps filter is not installed"
+
+add_printer "$hpps_printer" "$hpps_driver" "$hpps_sink_port"
+hpps_uri="ipp://127.0.0.1:${port}/ipp/print/${hpps_printer}"
+attributes="$(python3 "$script_dir/ipp-request.py" "$hpps_uri" get-printer-attributes)" ||
+  fail "Get-Printer-Attributes on $hpps_uri failed"
+model="$(ipp_value printer-make-and-model <<<"$attributes")" || model=""
+[[ "$model" == "$nickname" ]] || fail "printer $hpps_printer reports '$model', not the $hpps_ppd NickName '$nickname'"
+for supported in secure-printing-supported=on first-digit-supported=0 fourth-digit-supported=0; do
+  grep -q "^${supported%%=*}=.*${supported#*=}" <<<"$attributes" ||
+    fail "printer $hpps_printer does not offer ${supported%%-supported*}"
+done
+echo "  ok: $hpps_printer uses $hpps_ppd ($model), hpps route, PIN options offered"
+
+plain_out="$work_dir/route-hpps-plain.out"
+print_job "$hpps_printer" "$hpps_sink_port" "$plain_out" "$work_dir/route.pdf" application/pdf
+plain_job="$job_id"
+plain_log="$job_log"
+pin_out="$work_dir/route-hpps-pin.out"
+print_job "$hpps_printer" "$hpps_sink_port" "$pin_out" "$work_dir/route.pdf" application/pdf "${pin_attributes[@]}"
+pin_job="$job_id"
+pin_log="$job_log"
+
+assert_postscript "Route B plain job" "$plain_out"
+assert_postscript "Route B PIN job" "$pin_out"
+plain_pjl="$(pjl_header "$plain_out")"
+pin_pjl="$(pjl_header "$pin_out")"
+for header in "$plain_pjl" "$pin_pjl"; do
+  # hpps writes the job name header and hands over to PostScript.
+  if [[ "$header" != *'%-12345X@PJL JOBNAME=hplip_'* || "$header" != *'@PJL ENTER LANGUAGE=POSTSCRIPT'* ]]; then
+    printf '%s\n' "$header" >&2
+    fail "Route B: a job's PJL preamble was not written by hpps"
+  fi
+done
+if [[ "$plain_pjl" == *'@PJL SET HOLD'* ]]; then
+  printf '%s\n' "$plain_pjl" >&2
+  fail "Route B: the plain job $plain_job is held for a PIN"
+fi
+for line in '@PJL SET HOLD=ON' '@PJL SET HOLDTYPE=PRIVATE' "@PJL SET HOLDKEY=${pin}"; do
+  if ! grep -qx -- "$line" <<<"$pin_pjl"; then
+    printf '%s\n' "$pin_pjl" >&2
+    fail "Route B: the PIN job $pin_job has no '$line' in its PJL preamble"
+  fi
+done
+echo "  ok: plain job $plain_job and PIN job $pin_job completed through hpps; only the PIN job is held with HOLDKEY=$pin"
+
+for job_log in "$plain_log" "$pin_log"; do
+  if [[ "$job_log" != *"cfFilterChain: Running filter: hpps"* ]]; then
+    printf '%s\n' "$job_log" >&2
+    fail "Route B: the application log does not record a job running hpps"
+  fi
+done
+if leak="$(grep -Ei 'HOLDKEY|digit|PinPrnt|secure-printing' <<<"$pin_log")"; then
+  printf '%s\n' "$leak" >&2
+  fail "Route B: the application log records the PIN job's PIN options"
+fi
+if leak="$(podman logs "$name" 2>&1 | grep -Ei 'HOLDKEY|digit|PinPrnt|secure-printing')"; then
+  printf '%s\n' "$leak" >&2
+  fail "Route B: the container log records the PIN job's PIN options"
+fi
+echo "  ok: the application log records the hpps run of job $pin_job; neither it nor the container log has its PIN options"
+
+printf 'PASS: %s prints PDF as vector PostScript and holds hpps PIN jobs\n' "$image"

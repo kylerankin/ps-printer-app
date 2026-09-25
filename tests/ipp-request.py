@@ -9,9 +9,12 @@ so the caller can check it without trusting any client tool in the image:
 
 Usage:
     ipp-request.py PRINTER_URI get-printer-attributes
-    ipp-request.py PRINTER_URI print-job FILE MIME_TYPE
+    ipp-request.py PRINTER_URI print-job FILE MIME_TYPE [NAME=KEYWORD ...]
     ipp-request.py PRINTER_URI get-job-attributes JOB_ID
     ipp-request.py SYSTEM_URI get-system-attributes
+
+Each NAME=KEYWORD after a print-job's MIME_TYPE is sent as a keyword job
+template attribute, e.g. a printer's secure-printing=on.
 
 ipp:// maps to http:// on the same host and port (RFC 8010, section 4).
 """
@@ -97,11 +100,20 @@ def main() -> int:
     request += attribute(0x42, "requesting-user-name", "appliance-test")
     document = b""
     if operation == "print-job":
-        if len(sys.argv) != 5:
+        if len(sys.argv) < 5:
             print("print-job needs FILE and MIME_TYPE", file=sys.stderr)
             return 2
         request += attribute(0x42, "job-name", "appliance-test")
         request += attribute(0x49, "document-format", sys.argv[4])
+        job_attributes = b""
+        for setting in sys.argv[5:]:
+            name, separator, value = setting.partition("=")
+            if not name or not separator or not value:
+                print(f"job attribute is not NAME=KEYWORD: {setting}", file=sys.stderr)
+                return 2
+            job_attributes += attribute(0x44, name, value)
+        if job_attributes:
+            request += bytes([0x02]) + job_attributes
         with open(sys.argv[3], "rb") as handle:
             document = handle.read()
     elif operation == "get-job-attributes":

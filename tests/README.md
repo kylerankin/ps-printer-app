@@ -47,7 +47,7 @@ and run the full verification:
 
 ```sh
 just build     # tags ghcr.io/projectbluefin/ps-printer-app:build
-just verify    # validate, no-devel check, core-appliance.sh, core-payload.sh, foomatic-pin.sh, instance-isolation.sh
+just verify    # validate, no-devel check, core-appliance.sh, print-routes.sh, core-payload.sh, foomatic-pin.sh, instance-isolation.sh
 ```
 
 `just verify` runs the suites against the `:build` tag (see `docs/fsdk-ci.md`).
@@ -180,3 +180,27 @@ to be the only CUPS provider in it.
 `fsdk-contract-test.sh` is the regression test for that check: it runs it against
 the real graph, then against a scratch copy with each invariant broken in turn, and
 fails if any of those broken graphs is accepted. `just verify-contract` runs it.
+
+## Print-route verification
+
+`print-routes.sh` ([#10](https://github.com/projectbluefin/ps-printer-app/issues/10))
+drives the two filter routes of the image through to `socket-sink.py`, submitting a
+generated one-page PDF from the host with `ipp-request.py` and raising the
+application log to Informational through the web interface so each job's filter
+chain is on record:
+
+- **PDF to vector PostScript.** A printer on the generic PostScript driver must
+  complete the job through `pdftops` with no raster filter, and deliver PostScript
+  written by Ghostscript `ps2write` that starts with `%!PS-Adobe-3.0`, declares and
+  paints one page and ends with `%%EOF`.
+- **HPLIP `hpps` secure printing.** A printer on the HPLIP
+  `hp-color_laserjet_m553-ps.ppd` driver, whose `*cupsFilter` is `hpps` and which
+  declares `HPPinPrnt` and the four `HPFIDigit`..`HPFTDigit` PIN digits (offered over
+  IPP as `secure-printing` and `first-digit`..`fourth-digit`), prints a plain job and
+  a PIN job. Both must complete through `hpps` and carry its PJL job header; only the
+  PIN job may carry `@PJL SET HOLD=ON`, `HOLDTYPE=PRIVATE` and `HOLDKEY=<pin>`, and
+  neither the application log nor the container log may record its PIN options.
+
+It proves the PIN reaches the device URI, not that a printer holds the job. `IMAGE`,
+`NAME` and `PORT` (default 18060, sinks `PORT + 1` and `PORT + 2`) select the image,
+container name and port; `just verify-routes` runs it against the `:build` tag.
