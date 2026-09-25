@@ -1,0 +1,55 @@
+# Licenses and bundled driver inventory
+
+This file reconciles the OCI image license label produced by
+`rockcraft.yaml` with the third-party print drivers that are bundled into
+the image. See "## LEGAL STUFF" in `README.md` for the short form.
+
+## OCI license label scope
+
+`rockcraft.yaml` declares `license: Apache-2.0`. Rockcraft exposes this as
+the OCI image label:
+
+    org.opencontainers.image.licenses=Apache-2.0
+
+This label describes **only the ps-printer-app application source** in this
+repository (`ps-printer-app.c` and its build files), which is Apache-2.0. It
+does **not** describe the third-party print drivers and PostScript PPD files
+that are also bundled into the image.
+
+The label value is intentionally left as `Apache-2.0`. Changing it to a GPL
+expression would mislead consumers the other way, because the application
+source is genuinely Apache-2.0. The label's intended scope is clarified here
+and in the README: it covers the application source, not the bundled drivers.
+
+## Bundled third-party drivers (transitive inventory)
+
+The image bundles the following third-party print drivers and PostScript PPD
+files, taken from the pinned upstreams declared in `rockcraft.yaml`:
+
+| Component | Pinned upstream (rockcraft.yaml) | License scope |
+|-----------|----------------------------------|---------------|
+| HPLIP `hpps` filter and its PostScript PPDs | `salsa.debian.org/printing-team/hplip.v2.git` `debian/3.22.10+dfsg0-8` | GPL-2.0 per upstream HPLIP; recorded in the SBOM |
+| Foomatic-db PostScript PPDs | `github.com/OpenPrinting/foomatic-db` `20240504` | Mixed — the database is GPL-2.0; individual PPD files carry varied upstream/vendor licenses; recorded in the SBOM |
+| Manufacturer-supplied PostScript PPDs | (shipped inside foomatic-db) | Mixed — per-vendor upstream licenses; recorded in the SBOM |
+
+These transitive components are **not** covered by the `Apache-2.0` OCI
+label. Their exact license terms are enumerated in the image's signed SPDX
+software bill of materials (SBOM), which the consuming Bluefin factory build
+produces. Do not read `org.opencontainers.image.licenses=Apache-2.0` as a
+statement about these drivers' licenses.
+
+## Mixed / unresolved files
+
+The foomatic-db and manufacturer PPD directories contain hundreds of PPD
+files from many vendors, each under its own upstream license. Rather than
+collapse these into a single expression, they are recorded as mixed-license
+in the SPDX SBOM.
+
+## Verification (not done in this audit)
+
+The source-level trace above is based on the pinned upstream sources in
+`rockcraft.yaml`. Verifying the licenses actually present in a built image
+and in the signed SBOM on both release architectures (amd64 and arm64) must
+be done at build time, from the built `.rock`/OCI image and its SBOM, not by
+inspecting this repository. See `projectbluefin/ps-printer-app#27` for the
+security sign-off that gates public promotion.
