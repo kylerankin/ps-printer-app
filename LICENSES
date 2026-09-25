@@ -1,55 +1,119 @@
 # Licenses and bundled driver inventory
 
-This file reconciles the OCI image license label produced by
-`rockcraft.yaml` with the third-party print drivers that are bundled into
-the image. See "## LEGAL STUFF" in `README.md` for the short form.
+This file reconciles the OCI image license label of the FSDK OCI image
+`ghcr.io/projectbluefin/ps-printer-app` with the third-party print drivers and
+libraries bundled into it. See "## LEGAL STUFF" in `README.md` for the short
+form.
 
 ## OCI license label scope
 
-`rockcraft.yaml` declares `license: Apache-2.0`. Rockcraft exposes this as
-the OCI image label:
+`elements/oci/ps-printer-app.bst` sets the image config label
 
     org.opencontainers.image.licenses=Apache-2.0
 
+and `.github/workflows/registry-actions.yml` puts the same value on the
+published index as the `org.opencontainers.image.licenses` annotation.
+(`rockcraft.yaml` also declares `license: Apache-2.0`, but it is an upstream
+reference file and builds nothing this fork ships.)
+
 This label describes **only the ps-printer-app application source** in this
-repository (`ps-printer-app.c` and its build files), which is Apache-2.0. It
-does **not** describe the third-party print drivers and PostScript PPD files
-that are also bundled into the image.
+repository, which is Apache-2.0 (`LICENSE`): `ps-printer-app.c` and the files
+`elements/printer-app/application.bst` builds from it, and the entrypoint
+installed by `elements/printer-app/runtime-files.bst`. It does **not** describe
+the third-party print drivers, PostScript PPD files and printing stack that are
+also in the image.
 
 The label value is intentionally left as `Apache-2.0`. Changing it to a GPL
 expression would mislead consumers the other way, because the application
-source is genuinely Apache-2.0. The label's intended scope is clarified here
-and in the README: it covers the application source, not the bundled drivers.
+source is genuinely Apache-2.0, and the image as a whole has no single license
+expression (see below). The label's intended scope is clarified here and in the
+README: it covers the application source, not the bundled components.
 
 ## Bundled third-party drivers (transitive inventory)
 
-The image bundles the following third-party print drivers and PostScript PPD
-files, taken from the pinned upstreams declared in `rockcraft.yaml`:
+The image bundles these print drivers and PostScript PPD files. Licenses were
+read from the upstream sources at the pinned refs:
 
-| Component | Pinned upstream (rockcraft.yaml) | License scope |
-|-----------|----------------------------------|---------------|
-| HPLIP `hpps` filter and its PostScript PPDs | `salsa.debian.org/printing-team/hplip.v2.git` `debian/3.22.10+dfsg0-8` | GPL-2.0 per upstream HPLIP; recorded in the SBOM |
-| Foomatic-db PostScript PPDs | `github.com/OpenPrinting/foomatic-db` `20240504` | Mixed — the database is GPL-2.0; individual PPD files carry varied upstream/vendor licenses; recorded in the SBOM |
-| Manufacturer-supplied PostScript PPDs | (shipped inside foomatic-db) | Mixed — per-vendor upstream licenses; recorded in the SBOM |
+| Component | Element / pinned upstream | License per upstream source |
+|-----------|---------------------------|-----------------------------|
+| HPLIP `hpps` filter (`/usr/lib/cups/filter/hpps`) | `elements/printer-app/hplip-ps.bst`: `salsa:printing-team/hplip.v2.git` `debian/3.26.4+dfsg0-3` (`f27f786d5f10`) | Unresolved: `debian/copyright` lists `prnt/hpps/*` as BSD-3-clause, and `hppsfilter.c` carries HP's BSD-3-clause notice; the psutils-derived files (`psbooklet.c`, `psspec.c`, `psutil.c`, `pserror.c` and their headers) say "Copyright (C) Angus J. C. Duggan 1991-1995" and "See file LICENSE for details", and no such LICENSE is in the tree; HPLIP's own `copyright` file lists `prnt` among the directories the GPL applies to |
+| HPLIP PostScript PPDs (520 files from `prnt/ps`, in `/usr/share/ppd/hplip-ps-ppds`) | same | Mixed, see below |
+| Foomatic-db PostScript manufacturer PPDs (4,026 files from `db/source/PPD`, minus `*/PDF`, `*/PXL` and `*/PCL5`, in `/usr/share/ppd/foomatic-ps-ppds`) | `elements/printer-app/foomatic-ps-ppds.bst`, via fsdk-containers `printing/foomatic-db.bst` → FSDK 26.08.1 `components/foomatic-db.bst`: `github:OpenPrinting/foomatic-db.git` `20240504-10-g76dd1e31354c` | Mixed: foomatic-db `COPYING` and `README` say the GPL (version 2 text in `COPYING`) applies to most of the package, "exception are the PPD files in db/source/PPD, they can have different licenses (mostly MIT)"; only those PPD files are shipped. See below |
+| pyppd runtime inside both PPD archives | `elements/printer-app/pyppd.bst`: `github:OpenPrinting/pyppd.git` `29ccf6cf8578` | MIT (`LICENSE.txt`); the archives embed pyppd's `pyppd-ppdfile.in` and `compressor.py` |
+
+The shared printing base comes from fsdk-containers
+(`fsdk-containers.bst:printing/base.bst`, junction ref `8a02f5e18b6d` in
+`elements/fsdk-containers.bst`), built from FSDK 26.08.1 elements:
+
+| Component | Pinned upstream | License per upstream source |
+|-----------|-----------------|-----------------------------|
+| CUPS | `OpenPrinting/cups` `v2.4.19` | Apache-2.0 (`LICENSE`) with the CUPS exceptions in `NOTICE` |
+| cups-filters (incl. `foomatic-rip`), libcupsfilters, libppd | `OpenPrinting/cups-filters` `2.0.1`, `OpenPrinting/libcupsfilters` `2.2.1`, `OpenPrinting/libppd` `2.1.1` | `Apache-2.0-with-GPL2-LGPL2-Exception` (every `COPYING` stanza) |
+| Ghostscript | `ArtifexSoftware/ghostpdl` `ghostpdl-10.07.1` | AGPL-3.0-or-later (`LICENSE`, `doc/COPYING`), with the CMap, font and `jpegxr` exceptions listed in `LICENSE` |
+| mutool | `ArtifexSoftware/mupdf` `1.27.2` | GNU AGPL version 3 (`COPYING`) |
+| avahi | `lathiat/avahi` `v0.8` | LGPL-2.1 (`LICENSE`) |
+| PAPPL | `michaelrsweet/pappl` `v1.4.12` | Apache-2.0 (`LICENSE`) with the optional exceptions in `NOTICE` |
+| pappl-retrofit (also the shipped `testpage.pdf`) | `OpenPrinting/pappl-retrofit` `1626b338fc8b` | `Apache-2.0-with-GPL2-LGPL2-Exception` (`COPYING`) |
+
+The rest of the image (the FSDK runtime, D-Bus, Python, catatonit, CA
+certificates, tzdata, xz) is under each component's own upstream terms and is
+not traced in this file.
 
 These transitive components are **not** covered by the `Apache-2.0` OCI
-label. Their exact license terms are enumerated in the image's signed SPDX
-software bill of materials (SBOM), which the consuming Bluefin factory build
-produces. Do not read `org.opencontainers.image.licenses=Apache-2.0` as a
-statement about these drivers' licenses.
+label. Do not read `org.opencontainers.image.licenses=Apache-2.0` as a
+statement about their licenses.
 
 ## Mixed / unresolved files
 
-The foomatic-db and manufacturer PPD directories contain hundreds of PPD
-files from many vendors, each under its own upstream license. Rather than
-collapse these into a single expression, they are recorded as mixed-license
-in the SPDX SBOM.
+The build copies the PPDs unmodified: at the pinned refs the `*CloseUI` and
+`*1284DeviceId` header fixups in `hplip-ps.bst` and `foomatic-ps-ppds.bst`
+match no file, and every PPD in the two archives of a local x86_64 build is
+byte-identical to its upstream file. Each PPD therefore keeps its own header
+notice. Counting those notices (a text scan of each file's `*%` comments, not a
+legal review):
+
+- HPLIP `prnt/ps` (520): 455 carry the MIT notice; 40 carry the MIT notice
+  plus a "redistribution ... as long as ... the contents of the file is not
+  altered" condition; 13 carry only that redistribution condition (for
+  example `hp-designjet_t1500-postscript.ppd`); 12 carry no copyright or
+  license notice (for example `hp-designjet_t1530-postscript.ppd`).
+  `debian/copyright` covers them only through its `Files: *` GPL-2+ stanza.
+- Foomatic-db `db/source/PPD` selection (4,026): 3,030 carry the MIT notice;
+  481 carry the MIT notice plus a "not altered" redistribution condition
+  (Epson, HP, Kyocera, Utax); 345 carry a GNU GPL version 2 notice, 238 of
+  them "or any later version" (Brother, KONICA_MINOLTA, Oki, Sharp, Toshiba,
+  one Oce); 170 carry a BSD-style notice (Lexmark).
+
+These files are recorded as mixed-license rather than collapsed into one
+expression. The PPDs with an added "not altered" condition or no notice at
+all, and the `hpps` psutils-derived sources, are unresolved and need a
+maintainer decision before the label or any SPDX license field names them.
+
+The README says the application is Apache-2.0 "with an exception to allow
+linking against GPL2/LGPL2 software", but this repository's `LICENSE` and
+`NOTICE` do not contain that exception's text; that is also unresolved.
+
+## SBOM
+
+`just sbom` (see `Justfile`) runs buildstream-sbom on
+`oci/ps-printer-app.bst --deps all` and writes `ps-printer-app.spdx.json`: one
+SPDX package per BuildStream element and per source, with its download location
+and version or ref. It runs without `--with-licenses`, and the elements declare
+no license provenance, so the SBOM has no license fields. It is the component
+inventory (including build-only elements), not a license inventory: the license
+terms are the ones in this file.
+
+Only `.github/workflows/registry-actions.yml` publishes the SBOM: on a `v*` tag
+of the `stable` HEAD it runs `just sbom`, attaches the SPDX file to the image
+index and signs it with keyless cosign. No such tag has been published yet, so
+no signed SBOM exists; the version-tag hold in
+`projectbluefin/ps-printer-app#27` blocks the first one.
 
 ## Verification (not done in this audit)
 
-The source-level trace above is based on the pinned upstream sources in
-`rockcraft.yaml`. Verifying the licenses actually present in a built image
-and in the signed SBOM on both release architectures (amd64 and arm64) must
-be done at build time, from the built `.rock`/OCI image and its SBOM, not by
-inspecting this repository. See `projectbluefin/ps-printer-app#27` for the
-security sign-off that gates public promotion.
+The source-level trace above is based on the pinned upstream sources named in
+the elements. Verifying the licenses actually present in the built image and in
+the signed SBOM on both release architectures (amd64 and arm64) must be done at
+release time, from the published OCI image and its SBOM, not by inspecting this
+repository. See `projectbluefin/ps-printer-app#27` for the security sign-off
+that gates public promotion.
