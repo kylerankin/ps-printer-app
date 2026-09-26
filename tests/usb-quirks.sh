@@ -100,7 +100,7 @@ podman exec "$name" /usr/bin/test -r "$quirk_state" ||
 # defaults rather than an empty or guessed table.
 podman exec "$name" /usr/bin/test -s "$quirk_state" ||
   fail "the seeded USB quirk table is empty"
-if ! podman exec "$name" /usr/bin/diff -u "$quirk_state" "$quirk_packaged"; then
+if ! cmp -s <(podman exec "$name" cat "$quirk_state") <(podman exec "$name" cat "$quirk_packaged"); then
   podman exec "$name" /usr/bin/bash -c '
     echo "== seeded =="; cat /var/lib/ps-printer-app/usb/org.cups.usb-quirks
     echo "== packaged =="; cat /usr/share/cups/usb/org.cups.usb-quirks
