@@ -156,7 +156,10 @@ name; and that an instance name with nothing usable, a `PORT` outside 1-65535
 and an unwritable state volume (or part of its layout) are refused with 64.
 `tests/core-appliance.sh` covers the state layout, seeding, preservation of
 edited state across runs, and a non-numeric `PORT`; `tests/core-payload.sh`
-covers a configured printer surviving a restart.
+covers a configured printer surviving a restart; `tests/usb-quirks.sh`
+covers the USB quirk table: that the file seeded at `$USB_QUIRK_DIR/usb` is the
+packaged default the image ships at `/usr/share/cups/usb/org.cups.usb-quirks`,
+and that a user edit of it survives a restart.
 
 **Not verified.** No printer hardware is available. None of the following has
 been observed:
