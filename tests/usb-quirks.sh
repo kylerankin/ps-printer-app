@@ -100,13 +100,19 @@ podman exec "$name" /usr/bin/test -r "$quirk_state" ||
 # defaults rather than an empty or guessed table.
 podman exec "$name" /usr/bin/test -s "$quirk_state" ||
   fail "the seeded USB quirk table is empty"
-if ! cmp -s <(podman exec "$name" cat "$quirk_state") <(podman exec "$name" cat "$quirk_packaged"); then
+tmp_seeded="$(mktemp)"
+tmp_packaged="$(mktemp)"
+podman exec "$name" cat "$quirk_state" > "$tmp_seeded"
+podman exec "$name" cat "$quirk_packaged" > "$tmp_packaged"
+if ! cmp -s "$tmp_seeded" "$tmp_packaged"; then
+  rm -f "$tmp_seeded" "$tmp_packaged"
   podman exec "$name" /usr/bin/bash -c '
     echo "== seeded =="; cat /var/lib/ps-printer-app/usb/org.cups.usb-quirks
     echo "== packaged =="; cat /usr/share/cups/usb/org.cups.usb-quirks
   ' >&2
   fail "the seeded quirk table is not the packaged default at $quirk_packaged"
 fi
+rm -f "$tmp_seeded" "$tmp_packaged"
 echo "  ok: $quirk_state is a readable default table, identical to $quirk_packaged"
 
 echo "== Fresh state seeds the default table under USB_QUIRK_DIR/usb =="
