@@ -2,9 +2,9 @@ name: FSDK image CI
 
 on:
   pull_request:
-    branches: [testing]
+    branches: [main]
   merge_group:
-    branches: [testing]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -88,7 +88,7 @@ jobs:
           INPUTS_HASH: ${{ hashFiles('project.conf', 'elements/**', 'include/**', 'patches/**', 'files/**', 'Makefile', 'ps-printer-app.c', 'ps-printer-app.1', 'ps-printer-app.service', 'generic-ps-printer.ppd', 'testpage.ps', 'VERSION') }}
         run: echo "hash=${INPUTS_HASH}" >> "$GITHUB_OUTPUT"
       # Restore only: pull_request and merge_group caches are not reusable by
-      # other runs, so bst-cache.yml refills the cache from testing instead.
+      # other runs, so bst-cache.yml refills the cache from main instead.
       - name: Restore BuildStream cache
         if: env.FULL_BUILD == 'true' && needs.prerequisites.outputs.available == 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
