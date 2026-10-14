@@ -1,5 +1,8 @@
 import gzip
+import hashlib
 import io
+import json
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -262,3 +265,174 @@ class InventoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FAKE_PYPPD = r'''#!/usr/bin/env python3
+"""Stand-in for pyppd: records what it was given and writes a listing archive."""
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+source = Path(args[-1])
+ppds = sorted(p.relative_to(source).as_posix() for p in source.rglob("*.ppd"))
+Path(os.environ["FAKE_PYPPD_LOG"]).write_text(
+    json.dumps(
+        {
+            "args": args,
+            "cwd": os.getcwd(),
+            "pythonpath": os.environ.get("PYTHONPATH"),
+            "ppds": {p: (source / p).read_text(encoding="ascii") for p in ppds},
+        }
+    ),
+    encoding="utf-8",
+)
+archive = Path(args[args.index("-o") + 1])
+if os.environ.get("FAKE_PYPPD_EMPTY"):
+    archive.write_bytes(b"")
+else:
+    listing = "".join(f"foomatic-ps-ppds:0/{p}\n" for p in ppds)
+    archive.write_text(
+        '#!/bin/sh\n[ "$1" = list ] || exit 64\ncat <<\'LISTING\'\n' + listing + "LISTING\n",
+        encoding="ascii",
+    )
+    archive.chmod(0o755)
+'''
+
+
+class MainRunTests(unittest.TestCase):
+    """`main()` past its refusals: staging, phases, archive checks and the report."""
+
+    RETAINED = ["Acme/laser.ppd", "Acme/printer.ppd"]
+
+    def setUp(self):
+        self.work = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.foomatic = self.work / "foomatic-db"
+        source = self.foomatic / "db/source/PPD"
+        for name in ("Acme/printer.ppd", "Acme/laser.ppd", "Acme/PDF/pdf.ppd", "Acme/PXL/pxl.ppd"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_text(PPD_TEXT, encoding="ascii")
+        (source / "Acme/ReadMe.htm").write_text("<p>notes</p>", encoding="ascii")
+        (source / ".svn").mkdir()
+        (source / ".svn/entries").write_text("svn", encoding="ascii")
+        self.foomatic_commit = self.git_commit(self.foomatic)
+
+        self.pyppd = self.work / "pyppd"
+        (self.pyppd / "bin").mkdir(parents=True)
+        (self.pyppd / "bin/pyppd").write_text(FAKE_PYPPD, encoding="utf-8")
+        self.pyppd_commit = self.git_commit(self.pyppd)
+
+        self.pyppd_log = self.work / "pyppd-log.json"
+        self.scratch = self.work / "tmp"
+        self.scratch.mkdir()
+        self.report = self.work / "reports/benchmark.json"
+        self.enterContext(patch.dict(benchmark.os.environ, {"FAKE_PYPPD_LOG": str(self.pyppd_log)}))
+        self.enterContext(patch.object(benchmark.tempfile, "tempdir", str(self.scratch)))
+        self.enterContext(patch.object(benchmark, "MINIMUM_DRIVERS", len(self.RETAINED)))
+
+    @staticmethod
+    def git_commit(path: Path) -> str:
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(path), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                 "-c", "commit.gpgsign=false", *args],
+                check=True, capture_output=True, text=True,
+            ).stdout.strip()
+
+        git("init", "-q")
+        git("add", "-A")
+        git("commit", "-q", "--allow-empty", "-m", "fixture")
+        return git("rev-parse", "HEAD")
+
+    def run_main(self):
+        argv = ["benchmark_foomatic_ppds.py", str(self.foomatic), str(self.pyppd), str(self.report)]
+        stdout = io.StringIO()
+        with patch.object(benchmark.sys, "argv", argv), redirect_stdout(stdout):
+            code = benchmark.main()
+        return code, stdout.getvalue()
+
+    def assert_aborted(self, message: str) -> None:
+        with self.assertRaisesRegex(RuntimeError, message):
+            self.run_main()
+        self.assertFalse(self.report.exists())
+        self.assertFalse(self.report.with_suffix(".md").exists())
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_writes_the_json_and_markdown_report_for_the_archived_ppds(self):
+        code, stdout = self.run_main()
+
+        self.assertEqual(code, 0)
+        report = json.loads(self.report.read_text(encoding="utf-8"))
+        self.assertEqual(report["recipe"], "elements/printer-app/foomatic-ps-ppds.bst")
+        self.assertEqual(
+            report["source"],
+            {"foomatic_commit": self.foomatic_commit, "pyppd_commit": self.pyppd_commit},
+        )
+        self.assertEqual(report["source_inventory"]["ppd_files"], 4)
+        self.assertEqual(report["source_inventory"]["files"], 6)
+        self.assertEqual(report["staged_inventory"]["compressed_ppd_files"], 4)
+        self.assertEqual(report["staged_inventory"]["files"], 5)
+        self.assertEqual(sorted(report["inventory_after_phase"]), sorted(key for key, _, _ in PHASES))
+        after = report["inventory_after_phase"]
+        self.assertEqual(after["family_removal"]["compressed_ppd_files"], 2)
+        self.assertEqual(after["decompression"]["ppd_files"], 2)
+        self.assertEqual(after["decompression"]["files"], 3)
+        self.assertEqual(after["sanitization"]["files"], 2)
+        self.assertEqual(sorted(report["phase_seconds"]), sorted(benchmark.PHASE_KEYS))
+        self.assertEqual(
+            list(report["untimed_seconds"]),
+            ["archive_listing", "build_tree_copy", "fsdk_install_staging"],
+        )
+
+        listing = "".join(f"foomatic-ps-ppds:0/{p}\n" for p in self.RETAINED)
+        self.assertEqual(report["archive"]["drivers"], 2)
+        self.assertEqual(report["archive"]["listing_bytes"], len(listing))
+        self.assertEqual(
+            report["archive"]["driver_listing_sha256"], hashlib.sha256(listing.encode()).hexdigest()
+        )
+        self.assertEqual(
+            report["retained_ppd_paths_sha256"],
+            hashlib.sha256(("\n".join(self.RETAINED) + "\n").encode()).hexdigest(),
+        )
+
+        pyppd = json.loads(self.pyppd_log.read_text(encoding="utf-8"))
+        self.assertEqual(pyppd["args"], ["-v", "-o", "foomatic-ps-ppds", "PPD"])
+        self.assertEqual(Path(pyppd["cwd"]).name, "build")
+        self.assertEqual(pyppd["pythonpath"], str(self.pyppd.resolve()))
+        self.assertEqual(sorted(pyppd["ppds"]), self.RETAINED)
+        for text in pyppd["ppds"].values():
+            self.assertIn("*CloseUI: *Duplex", text)
+            self.assertIn("*1284DeviceID:", text)
+
+        markdown = self.report.with_suffix(".md").read_text(encoding="utf-8")
+        self.assertEqual(stdout[stdout.index("### Foomatic PPD benchmark"):], markdown)
+        self.assertIn(f"foomatic-db `{self.foomatic_commit}`", markdown)
+        self.assertIn("- FSDK-staged input: 4 `.ppd.gz`", markdown)
+        self.assertIn("- Archived PPD files: 2 (", markdown)
+        self.assertIn("2 discoverable driver entries", markdown)
+        for _, label, _ in PHASES:
+            self.assertIn(f"| {label} | ", markdown)
+        self.assertIn("| pyppd parse/compress/archive | ", markdown)
+        self.assertIn(f"JSON report: `{self.report}`", markdown)
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_aborts_when_a_ppd_is_not_mode_0644_after_the_phases(self):
+        real_run_phase = benchmark.run_phase
+
+        def run_phase_then_loosen_mode(key, build_dir):
+            real_run_phase(key, build_dir)
+            if key == "sanitization":
+                (build_dir / "PPD/Acme/laser.ppd").chmod(0o755)
+
+        with patch.object(benchmark, "run_phase", run_phase_then_loosen_mode):
+            self.assert_aborted(r"PPDs not mode 0644 after chmod: \['Acme/laser.ppd'\]")
+        self.assertFalse(self.pyppd_log.exists())
+
+    def test_aborts_when_pyppd_writes_an_empty_archive(self):
+        with patch.dict(benchmark.os.environ, {"FAKE_PYPPD_EMPTY": "1"}):
+            self.assert_aborted("pyppd did not produce a non-empty archive")
+
+    def test_aborts_when_the_archive_lists_fewer_drivers_than_the_floor(self):
+        with patch.object(benchmark, "MINIMUM_DRIVERS", len(self.RETAINED) + 1):
+            self.assert_aborted("pyppd archive exposes only 2 drivers; expected at least 3")
