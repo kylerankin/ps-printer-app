@@ -29,7 +29,7 @@ on:
   # label-sync: run by hand after installing and after every change to the org config
   workflow_dispatch:
   push:
-    branches: [testing]
+    branches: [main]
     paths: [.github/prow.yaml]
 
 permissions: {}

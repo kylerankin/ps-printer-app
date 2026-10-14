@@ -2,7 +2,7 @@ name: Foomatic PPD build benchmark
 
 on:
   pull_request:
-    branches: [testing]
+    branches: [main]
     paths:
       - scripts/benchmark_foomatic_ppds.py
       - tests/test_benchmark_foomatic_ppds.py

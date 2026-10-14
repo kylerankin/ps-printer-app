@@ -2,7 +2,7 @@ name: BuildStream cache refill
 
 on:
   push:
-    branches: [testing]
+    branches: [main]
     paths:
       - project.conf
       - elements/**

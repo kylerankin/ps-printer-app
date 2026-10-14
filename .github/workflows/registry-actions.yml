@@ -1,11 +1,11 @@
 name: Publish signed FSDK OCI image
 
-# Every push to testing (merged through the merge queue, whose required
+# Every push to main (merged through the merge queue, whose required
 # FSDK checks already built and verified it) is rebuilt, verified, signed and
 # published. Reverting a pull request is the rollback.
 on:
   push:
-    branches: [testing]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -22,7 +22,7 @@ jobs:
     # Publishing stays held until the PPD-upload security sign-off (ps#45);
     # a maintainer lifts the hold by setting the PS_PUBLISH_APPROVED repository
     # variable to true.
-    if: vars.PS_PUBLISH_APPROVED == 'true' && github.ref == 'refs/heads/testing'
+    if: vars.PS_PUBLISH_APPROVED == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -297,7 +297,7 @@ jobs:
         run: |
           set -euo pipefail
           # sha-<commit> is immutable (metadata refuses a published commit);
-          # <VERSION>, its per-arch tags and stable move to the newest testing commit.
+          # <VERSION>, its per-arch tags and stable move to the newest main commit.
           oras tag "${IMAGE}@${DIGEST}" "sha-${REVISION}"
           oras tag "${IMAGE}@${X86_64_DIGEST}" "${VERSION}-x86_64"
           oras tag "${IMAGE}@${AARCH64_DIGEST}" "${VERSION}-aarch64"
