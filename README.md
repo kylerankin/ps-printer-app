@@ -188,12 +188,12 @@ just verify
 Issues and pull requests are handled with Prow `/commands`; see
 [how issues and PRs work here](https://github.com/projectbluefin/common/blob/main/docs/skills/label-workflow.md).
 
-PRs target `testing` and merge through the merge queue, whose required native
+PRs target `main` and merge through the merge queue, whose required native
 x86_64 and aarch64 build and `just verify` checks gate every commit. Renovate
 keeps the fsdk-containers junction (`elements/fsdk-containers.bst`) on
 fsdk-containers `main` and automerges each bump once those checks pass.
 
-Every push to `testing` makes `registry-actions.yml` rebuild and verify both
+Every push to `main` makes `registry-actions.yml` rebuild and verify both
 architectures and publish an amd64+arm64 GHCR index, keyless cosign-signed
 (index and both architecture manifests), with a signed SPDX SBOM and build
 provenance. The workflow derives the `io.projectbluefin.fsdk.version` and
@@ -211,7 +211,7 @@ Publishing is held until the PPD-upload security sign-off
 `registry-actions.yml` job is skipped unless the repository variable
 `PS_PUBLISH_APPROVED` is `true`. To lift the hold, a maintainer runs
 `gh variable set PS_PUBLISH_APPROVED --body true -R projectbluefin/ps-printer-app`,
-dispatches `registry-actions.yml` on `testing` (or merges the next pull request),
+dispatches `registry-actions.yml` on `main` (or merges the next pull request),
 and then makes the new `ghcr.io/projectbluefin/ps-printer-app` package public
 in its package settings (Actions cannot change package visibility; check it with
 `skopeo list-tags docker://ghcr.io/projectbluefin/ps-printer-app`, which needs no
@@ -638,7 +638,7 @@ HPLIP's `hpps` filter and PostScript PPD files, the Foomatic-db manufacturer
 PostScript PPD files, and the shared printing base (CUPS, cups-filters,
 Ghostscript, PAPPL and the rest). Those are licensed under their respective
 upstream terms, several of them mixed or unresolved. The `just sbom` SPDX SBOM,
-signed and attached on each push to `testing` (publishing held by #45),
+signed and attached on each push to `main` (publishing held by #45),
 inventories the components and their pinned sources but carries no license
 fields. The `Apache-2.0` label is intentionally left unchanged, as the application source
 is genuinely Apache-2.0; the label's scope is the application source, not the

@@ -1,6 +1,6 @@
 # Native FSDK image validation
 
-`.github/workflows/fsdk-ci.yml` runs on every pull request to `testing`, in the
+`.github/workflows/fsdk-ci.yml` runs on every pull request to `main`, in the
 merge queue, and on manual dispatch. Pull requests only validate the BuildStream
 graph (`just validate`); no image is built. The merge queue and
 `workflow_dispatch` run the full native x86_64 and AArch64 build and verification,
@@ -12,7 +12,7 @@ Full builds restore BuildStream's local cache (`~/.cache/buildstream/cas`,
 `ci/buildstream.conf` sets no cache quota, because BuildStream fails builds at
 quota. Only `.github/workflows/bst-cache.yml` saves the cache (saved only when an
 arch fits in 9000 MB uncompressed; a larger cache is skipped with a warning): on pushes to
-`testing` that touch graph inputs, nightly, and on dispatch.
+`main` that touch graph inputs, nightly, and on dispatch.
 Reset it with `gh cache delete --all -R projectbluefin/ps-printer-app`.
 
 Both jobs inherit only `contents: read`. Checkout does not persist credentials,
@@ -23,8 +23,8 @@ workflow.
 
 ## Release
 
-`.github/workflows/registry-actions.yml` runs on every push to `testing` (and on
-dispatch from `testing`). Every commit there came through the merge queue, so
+`.github/workflows/registry-actions.yml` runs on every push to `main` (and on
+dispatch from `main`). Every commit there came through the merge queue, so
 it already passed the full native build and `just verify` above. The
 `metadata` job reads `VERSION`, derives the `io.projectbluefin.fsdk.version`
 and `.ref` labels from the freedesktop-sdk junction of the pinned
