@@ -130,7 +130,7 @@ jobs:
           REPO=ghcr.io/projectbluefin/printing-base-devel
           DIGEST="$(skopeo inspect --format '{{.Digest}}' "docker://${REPO}:${ARCH}-${KEY}")"
           cosign verify \
-            --certificate-identity-regexp '^https://github.com/projectbluefin/fsdk-containers/.github/workflows/' \
+            --certificate-identity 'https://github.com/projectbluefin/fsdk-containers/.github/workflows/printing-base.yml@refs/heads/main' \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${REPO}@${DIGEST}" >/dev/null
           # Copy exactly the verified digest; never touch podman storage.
