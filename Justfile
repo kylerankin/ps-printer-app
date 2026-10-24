@@ -39,12 +39,15 @@ bst *ARGS:
 # what the check still rejects, and this is the only contract gate a pull
 # request runs. It needs no BuildStream, container runtime or network.
 #
-# tests/entrypoint-validation.sh is host-only too: the entrypoint must reject
-# malformed web-administration settings before it touches persistent state.
+# tests/entrypoint-*.sh are host-only too: the entrypoint must reject malformed
+# PORT, instance and web-administration settings before it touches persistent
+# state, and instance-isolation.sh's refusal matcher must fail closed.
 validate:
     #!/usr/bin/env bash
     set -euo pipefail
     tests/entrypoint-validation.sh
+    tests/entrypoint-port.sh
+    tests/entrypoint-refusal-helper.sh
     tests/fsdk-contract-test.sh
     names="$(just bst show --deps all --format '%{name}' oci/ps-printer-app.bst)"
     printf '%s\n' "$names" | tests/fsdk-contract.sh --graph -

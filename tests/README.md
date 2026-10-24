@@ -91,13 +91,22 @@ each with its own `PORT`, state volume and `PRINTER_APP_INSTANCE`, and one witho
 `PRINTER_APP_INSTANCE`. The named instances must both serve, report their distinct,
 sanitized names over IPP Get-System-Attributes (`ipp-request.py`) and in the web
 interface title, and advertise them as `_ipps-system._tcp` on their own port with
-their avahi-daemon; the unnamed one must keep `PostScript Printer Application`. The
+their avahi-daemon; the unnamed one must keep `PostScript Printer Application`. An
+instance started with `PRINTER_APP_SERVER_OPTIONS=no-web-interface` must still
+accept a printer added over IPP and answer Get-Printer-Attributes for it, while
+`/`, `/addppd` and the printer's `/…/device` page answer 404 (as do `/logs` and
+`/logfile.txt`); the same printer and those first three paths answer 200 on an instance with the web interface, so the 404 is the
+removal of the pages and not a wrong URL. The
 entrypoint must refuse with 64 an instance name with nothing usable, `PORT` 0, 65536
-and an overlong number, and a state volume, or a directory of its layout, that UID
-65532 cannot write, printing the `podman unshare chown` that fixes it. Discovery
+and an overlong number, a state volume, or a directory of its layout, that UID
+65532 cannot write, printing the `podman unshare chown` that fixes it, a malformed
+`PRINTER_APP_AUTH_SERVICE` or `PRINTER_APP_ADMIN_GROUP`, and an unsupported
+`PRINTER_APP_SERVER_OPTIONS` value (`no-tls`, or `web-log` next to
+`no-web-interface`); it must refuse with 78 any `PRINTER_APP_AUTH_SERVICE` and a
+`PRINTER_APP_ADMIN_GROUP` without one. Discovery
 from another host and USB access are not verified (see
 [docs/state-and-device-isolation.md](../docs/state-and-device-isolation.md)).
-`IMAGE`, `PORT` (default 18080; `PORT`..`PORT+2` are used) and `NAME_PREFIX`
+`IMAGE`, `PORT` (default 18080; `PORT`..`PORT+3` are used) and `NAME_PREFIX`
 (container names, default `ps-printer-app-inst`) select the image, ports and names.
 
 ## Service advertisements
@@ -116,6 +125,15 @@ requires Podman, `avahi-browse`, and an Avahi daemon running on the host. Run it
 on an otherwise quiet test network so unrelated remote-login services do not
 change between snapshots. `just verify` also runs the image-only
 `check-no-remote-login-records` recipe, which needs no host-network observation.
+
+## Entrypoint checks
+
+`tests/entrypoint-validation.sh`, `tests/entrypoint-port.sh` and
+`tests/entrypoint-refusal-helper.sh` exercise the `PORT`,
+`PRINTER_APP_INSTANCE`, `PRINTER_APP_AUTH_SERVICE`, `PRINTER_APP_ADMIN_GROUP`
+and `PRINTER_APP_SERVER_OPTIONS` validation at the top of
+`files/container-entrypoint.sh` and the refusal matcher on the host, without
+building or running the OCI image. `just validate` runs them.
 
 ## The manifest
 
