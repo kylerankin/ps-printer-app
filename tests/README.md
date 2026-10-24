@@ -196,6 +196,18 @@ diagnostic naming the path, to accept license notices under
 `usr/share/licenses`, to fail when the export fails part-way, and to remove the
 container and the extraction directory either way.
 
+### The remote-login record guard
+
+`tests/test_no_remote_login_records.py` runs the real
+`just check-no-remote-login-records` recipe with a `podman` stub on `PATH`. The
+stub checks that the recipe runs the image's shell with `--rm`, then runs the
+recipe's own script against a scratch `etc/avahi/services` directory, so it
+needs `just` but no image or container runtime. `just verify` only ever shows
+the guard an image the build already cleaned; these cases require it to refuse
+`ssh.service` and `sftp-ssh.service` with a diagnostic naming the file, to accept
+an image with no service files or only unrelated ones, and to fail when the
+container cannot run.
+
 ## The graph contract
 
 `fsdk-contract.sh` checks this repository against fsdk-containers' printing-base
