@@ -91,6 +91,7 @@ test:		$(TEST_TARGETS)
 	for t in $(TEST_TARGETS); do ./$$t || exit 1; done
 	for t in $(PYTHON_TESTS); do python3 -m unittest discover -s tests -p $$t || exit 1; done
 	python3 -m unittest discover -s tests -p test_verify_no_devel.py
+	python3 -m unittest discover -s tests -p test_no_remote_login_records.py
 
 tests/test_ps_autoadd:	tests/test_ps_autoadd.c ps-printer-app.c \
 			tests/stubs/pappl-retrofit.h

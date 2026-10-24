@@ -104,7 +104,7 @@ inventory (including build-only elements), not a license inventory: the license
 terms are the ones in this file.
 
 Only `.github/workflows/registry-actions.yml` publishes the SBOM: on each push
-to `testing` it runs `just sbom`, attaches the SPDX file to the image index and
+to `main` it runs `just sbom`, attaches the SPDX file to the image index and
 signs it with keyless cosign. Nothing has been published yet, so no signed SBOM
 exists; publishing is held until the PPD-upload security sign-off
 (`projectbluefin/ps-printer-app#45`).

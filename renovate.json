@@ -5,7 +5,7 @@
   ],
   "forkProcessing": "enabled",
   "baseBranchPatterns": [
-    "testing"
+    "main"
   ],
   "enabledManagers": [
     "custom.regex",

@@ -241,8 +241,9 @@ enabled. Three variables control web administration:
 | `PRINTER_APP_AUTH_SERVICE` | `-o auth-service=…` | A PAM service name; refused (exit `78`) while the base builds PAPPL without PAM. |
 | `PRINTER_APP_ADMIN_GROUP` | `-o admin-group=…` | A group from the image's `/etc/group`; requires `PRINTER_APP_AUTH_SERVICE`. |
 
-`PRINTER_APP_SERVER_OPTIONS=no-web-interface` turns the web pages off while IPP
-printing and DNS-SD keep working; manage printers from inside the container with
+`PRINTER_APP_SERVER_OPTIONS=no-web-interface` turns the web pages off, including
+pappl-retrofit's `/addppd` PPD upload and per-printer `/<printer>/device` pages,
+while IPP printing and DNS-SD keep working; manage printers from inside the container with
 `podman exec ps-printer-app-a ps-printer-app -u ipp://127.0.0.1:18080/ipp/system … add`.
 `PRINTER_APP_AUTH_SERVICE` is refused outright because the shared printing base
 builds PAPPL with `--disable-libpam`, so forwarding it would answer every
