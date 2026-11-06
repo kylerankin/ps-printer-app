@@ -9,8 +9,13 @@ parts have been verified and which have not.
 The launcher is `files/container-entrypoint.sh`, installed by
 `elements/printer-app/runtime-files.bst` as
 `/usr/libexec/ps-printer-app/container-entrypoint` and started by `catatonit`
-(`elements/oci/ps-printer-app.bst`). It rejects a bad configuration with exit
-status 64 before any daemon starts.
+(`elements/oci/ps-printer-app.bst`). It sources the shared printing-base startup
+library (`/usr/libexec/printer-app/entrypoint-common.sh`, provided by the
+`fsdk-containers.bst:printing/base.bst` junction) and calls its `printer_app_*`
+helpers, so every safety and bug fix made in that one library reaches this
+appliance as well as the others. The library rejects a bad configuration with
+exit status 64 before any daemon starts, and a state volume that cannot be
+secured with exit status 73.
 
 ## The state volume
 
@@ -43,9 +48,14 @@ podman run -d --name ps-printer-app-a \
 A bind mount owned by the invoking user belongs to root inside a rootless
 container, so UID 65532 cannot write it: the application would start, fail to
 save its state, and lose every configured printer at the next restart. The
-entrypoint refuses to start instead when the volume, any directory of the
-layout above, or an existing state or log file is not writable, and prints the
-`podman unshare chown -R 65532:65532 <state-dir>` that fixes it.
+shared library refuses to start instead when the volume, any directory of the
+layout above, or an existing state or log file is not writable, or any
+directory of the layout is a symlink, and prints the message that fixes it:
+`Persistent state is not writable or cannot be secured: …; mount a writable
+volume with permissions for UID:GID 65532:65532`. It refuses with exit status 73,
+which marks a state-protection failure rather than a malformed configuration. A
+symlinked directory is refused before the library follows it out of the volume,
+so a link cannot point the state anywhere the image does not own.
 
 Nothing in the entrypoint replaces a value that is already in the volume. The
 layout is created only where it is missing, and `cups/snmp.conf` and the USB
@@ -179,7 +189,9 @@ distinct sanitized names over IPP Get-System-Attributes and in the web
 interface, and each advertise their own name as `_ipps-system._tcp` on their
 own port; that an instance without `PRINTER_APP_INSTANCE` keeps the built-in
 name; and that an instance name with nothing usable, a `PORT` outside 1-65535
-and an unwritable state volume (or part of its layout) are refused with 64;
+and a malformed `PRINTER_APP_AUTH_SERVICE` or `PRINTER_APP_ADMIN_GROUP` are
+refused with 64; an unwritable state volume or part of its layout, or a
+symlinked directory in the layout, are refused with 73;
 that a malformed `PRINTER_APP_AUTH_SERVICE` or `PRINTER_APP_ADMIN_GROUP` and
 an unsupported `PRINTER_APP_SERVER_OPTIONS` value (`no-tls`, or `web-log`
 next to `no-web-interface`) are refused with 64, and an auth service or an

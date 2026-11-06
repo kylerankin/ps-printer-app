@@ -285,18 +285,28 @@ expect_refusal "web-log combined with no-web-interface" \
   -e PRINTER_APP_SERVER_OPTIONS=no-web-interface,web-log
 
 # A fresh bind mount owned by the invoking user is owned by root inside a
-# rootless container, so the image user cannot write it.
+# rootless container, so the image user cannot write it. The shared base refuses
+# these state-protection failures with 73.
 new_state_dir
 unwritable="$state_dir"
 chmod 0755 "$unwritable"
-expect_refusal "an unwritable state volume" 'podman unshare chown -R 65532:65532 <state-dir>' \
+refusal_status=73
+expect_refusal "an unwritable state volume" 'Persistent state is not writable or cannot be secured' \
   -v "$unwritable:/var/lib/ps-printer-app:Z"
 # A writable root with an unwritable part of the layout would still lose state.
 new_state_dir
 partial="$state_dir"
 chmod 0777 "$partial"
 mkdir -m 0755 "$partial/ppd"
-expect_refusal "a state volume with an unwritable ppd/" 'podman unshare chown -R 65532:65532 <state-dir>' \
+expect_refusal "a state volume with an unwritable ppd/" 'Persistent state is not writable or cannot be secured' \
   -v "$partial:/var/lib/ps-printer-app:Z"
+
+# A symlinked directory in the layout is refused before the library follows it
+# out of the volume, so a link cannot point the state anywhere the image does
+# not own. The shared base refuses this with 73, not 64.
+new_state_dir
+ln -s /etc "$state_dir/cups"
+expect_refusal "a symlinked state directory" 'must not be a symlink' \
+  -v "$state_dir:/var/lib/ps-printer-app:Z"
 
 printf 'PASS: %s runs isolated instances and refuses invalid instance, port and state configurations\n' "$image"

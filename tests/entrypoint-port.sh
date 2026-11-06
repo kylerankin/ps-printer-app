@@ -3,14 +3,11 @@
 # files/container-entrypoint.sh without building or running the OCI image.
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-root="$(cd "$script_dir/.." && pwd)"
-entrypoint="$root/files/container-entrypoint.sh"
-
-# Extract prologue before state_dir setup so checks run on host without root or state mount.
-prologue="$(sed '/^state_dir=/,$d' "$entrypoint")"
-prologue="$prologue"$'\n'"printf '%s\n' \"\${system_name:-}\""
-
+# The wrapper only sources the shared printing-base library and calls
+# printer_app_validate, so source the library at the junction ref and call that
+# function directly instead of slicing the local prologue. On success it sets
+# printer_app_args (printed below); on a malformed value it exits 64.
+source "$(dirname "$0")/source-printing-base.sh"
 failures=0
 
 report() {
@@ -22,7 +19,7 @@ run() {
   local label="$1" want_status="$2" want_output="$3"
   shift 3
   local status=0 output
-  output="$(env -i PATH="$PATH" "$@" bash -c "$prologue" 2>&1)" || status=$?
+  output="$(env -i PATH="$PATH" LIB="$LIB" "$@" bash -c 'source "$LIB"; printer_app_validate "PostScript Printer Application"; printf "%s\n" "${printer_app_args[*]:-}"' 2>&1)" || status=$?
   if [ "$status" != "$want_status" ]; then
     report "$label: exit status $status, expected $want_status (output: $output)"
     return

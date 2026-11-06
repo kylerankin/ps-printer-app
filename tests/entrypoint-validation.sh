@@ -5,7 +5,12 @@
 # image.
 set -Eeuo pipefail
 
-entrypoint="$(dirname "$0")/../files/container-entrypoint.sh"
+# These run the shared printing-base startup library exactly as the image
+# entrypoint does, rather than the thin local wrapper, so they exercise the
+# code that actually ships. The wrapper only sources the library and calls
+# printer_app_validate, so this sources the library at the junction ref and
+# calls that function instead of the local file.
+source "$(dirname "$0")/source-printing-base.sh"
 failures=0
 
 # expect_rejection <exit status> <diagnostic substring> NAME=VALUE...
@@ -14,7 +19,9 @@ expect_rejection() {
   shift 2
   local output status
   set +e
-  output="$(env -i PATH="$PATH" "$@" bash "$entrypoint" 2>&1 </dev/null)"
+  # Run the library's validation in a clean environment with the given NAME=VALUE
+  # pairs set, exactly as the container entrypoint does before any state.
+  output="$(env -i PATH="$PATH" LIB="$LIB" "$@" bash -c 'source "$LIB"; printer_app_validate "PostScript Printer Application"' </dev/null 2>&1)"
   status=$?
   set -e
   if [[ "$status" -ne "$expected_status" || "$output" != *"$expected_message"* ]]; then
