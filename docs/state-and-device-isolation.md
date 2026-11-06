@@ -192,9 +192,8 @@ name; and that an instance name with nothing usable, a `PORT` outside 1-65535
 and a malformed `PRINTER_APP_AUTH_SERVICE` or `PRINTER_APP_ADMIN_GROUP` are
 refused with 64; an unwritable state volume or part of its layout, or a
 symlinked directory in the layout, are refused with 73;
-that a malformed `PRINTER_APP_AUTH_SERVICE` or `PRINTER_APP_ADMIN_GROUP` and
-an unsupported `PRINTER_APP_SERVER_OPTIONS` value (`no-tls`, or `web-log`
-next to `no-web-interface`) are refused with 64, and an auth service or an
+that an unsupported `PRINTER_APP_SERVER_OPTIONS` value (`no-tls`, or `web-log`
+next to `no-web-interface`) is refused with 64, and an auth service or an
 admin group without one with 78. It also starts an
 instance with `PRINTER_APP_SERVER_OPTIONS=no-web-interface` and checks that a
 printer can still be added over IPP and answers Get-Printer-Attributes while

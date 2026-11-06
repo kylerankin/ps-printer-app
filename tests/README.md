@@ -137,6 +137,13 @@ and `PRINTER_APP_SERVER_OPTIONS` validation at the top of
 `files/container-entrypoint.sh` and the refusal matcher on the host, without
 building or running the OCI image. `just validate` runs them.
 
+The first two source the shared startup library through
+`tests/source-printing-base.sh`, which downloads
+`elements/printing/files/entrypoint-common.sh` from fsdk-containers at the
+junction ref pinned in `elements/fsdk-containers.bst`, so they need network
+access. To run them offline, point `PRINTER_APP_ENTRYPOINT_COMMON` at a local
+copy of that file at the same ref.
+
 ## The manifest
 
 `payload-manifest.txt` is the list of driver, filter, backend, interpreter and PPD

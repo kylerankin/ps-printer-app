@@ -13,6 +13,19 @@ set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Offline runs: PRINTER_APP_ENTRYPOINT_COMMON names a local copy of the library
+# (it must match the pinned junction ref); no network is used.
+if [[ -n "${PRINTER_APP_ENTRYPOINT_COMMON:-}" ]]; then
+  if [[ ! -r "$PRINTER_APP_ENTRYPOINT_COMMON" ]]; then
+    printf 'source-printing-base: PRINTER_APP_ENTRYPOINT_COMMON=%s is not readable\n' \
+      "$PRINTER_APP_ENTRYPOINT_COMMON" >&2
+    exit 1
+  fi
+  export LIB="$PRINTER_APP_ENTRYPOINT_COMMON"
+  source "$LIB"
+  return 0
+fi
+
 # The junction ref is pinned in the build graph, not on disk.
 junction_ref="$(
   sed -nE 's/^[[:space:]]*ref:[[:space:]]*([0-9a-f]+)[[:space:]]*$/\1/p' \
