@@ -12,8 +12,7 @@ set -euo pipefail
 app=ps-printer-app
 state=/var/lib/ps-printer-app
 
-# Sourcing the library validates the knobs and builds printer_app_args; it does
-# not touch state, change the umask, or install traps.
+# Sourcing the library only defines helpers; validation and startup are explicit.
 source /usr/libexec/printer-app/entrypoint-common.sh
 
 # Validate PORT, the web-administration knobs and the instance name before any
@@ -43,6 +42,8 @@ export USB_QUIRK_DIR="$state"
 # The shared base creates /run/dbus and /run/avahi-daemon; this image keeps its
 # own /run/ps-printer-app.
 mkdir -p /run/ps-printer-app
+
+declare -F printer_app_start_countme >/dev/null && printer_app_start_countme "$state" "$app"
 
 # Start the app under the shared supervisor (creates /run/dbus and
 # /run/avahi-daemon and runs dbus-daemon + avahi-daemon before the app).

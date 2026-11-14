@@ -11,7 +11,7 @@ The launcher is `files/container-entrypoint.sh`, installed by
 `/usr/libexec/ps-printer-app/container-entrypoint` and started by `catatonit`
 (`elements/oci/ps-printer-app.bst`). It sources the shared printing-base startup
 library (`/usr/libexec/printer-app/entrypoint-common.sh`, provided by the
-`fsdk-containers.bst:printing/base.bst` junction) and calls its `printer_app_*`
+`fsdk-containers.bst:printing/entrypoint-common.bst` junction element) and calls its `printer_app_*`
 helpers, so every safety and bug fix made in that one library reaches this
 appliance as well as the others. The library rejects a bad configuration with
 exit status 64 before any daemon starts, and a state volume that cannot be
@@ -62,6 +62,16 @@ layout is created only where it is missing, and `cups/snmp.conf` and the USB
 quirks are seeded from the image once, so an edit survives a restart and an
 image upgrade. `PPD_PATHS` may be set to change the PPD search path; the other
 paths are fixed.
+
+The shared, noncritical countme reporter sends an anonymous HTTPS `PUT` to
+`https://countme.projectbluefin.io/v1/ping` with only
+`{"image":"ps-printer-app/main:unknown"}`. This measures an active reporting
+app installation per UTC calendar day, not unique hosts, physical printers,
+or print jobs. A successful report records the UTC day in this state volume
+so a restart that day does not report again. Keep the same state when
+disabling and re-enabling an instance in ChairLift. The stream is `unknown`
+because an image digest does not identify its release tag; reporting failure
+does not stop printing.
 
 CUPS filters come only from the image (`FILTER_DIR`,
 `/usr/lib/ps-printer-app/filter`); the volume has no filter directory. A PPD
