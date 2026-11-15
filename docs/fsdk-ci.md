@@ -26,7 +26,8 @@ dispatch from `main`). Every commit there came through the merge queue, so
 it already passed the full native build and `just verify` above. The
 `metadata` job reads `VERSION`, derives the `io.projectbluefin.fsdk.version`
 and `.ref` labels from the freedesktop-sdk junction of the pinned
-fsdk-containers commit, and refuses a commit whose `sha-<commit>` tag already
+fsdk-containers commit (`scripts/fsdk-pin.sh`, which `just validate` already
+ran on the pull request through `tests/source-pins.sh`), and refuses a commit whose `sha-<commit>` tag already
 exists. `build` rebuilds and verifies both architectures and stamps those
 labels plus the revision and creation time; `publish`, the only job with
 `packages: write` and `id-token: write`, needs both. The index, both

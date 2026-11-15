@@ -291,3 +291,18 @@ chain is on record:
 It proves the PIN reaches the device URI, not that a printer holds the job. `IMAGE`,
 `NAME` and `PORT` (default 18060, sinks `PORT + 1` and `PORT + 2`) select the image,
 container name and port; `just verify-routes` runs it against the `:build` tag.
+
+## The FSDK release pin
+
+`source-pins.sh` ([#209](https://github.com/projectbluefin/ps-printer-app/issues/209))
+reads the fsdk-containers commit pinned in `elements/fsdk-containers.bst` and
+requires `scripts/fsdk-pin.sh` to read an FSDK release (`<version> <commit>`)
+from that commit's `elements/freedesktop-sdk.bst`. Publishing labels the image
+with the same script, so a junction bump that passes `just validate` can be
+published. `FSDK_CONTAINERS_REMOTE` overrides the fsdk-containers remote.
+
+`source-pins-test.sh` runs it in a scratch copy of the project against a local
+fsdk-containers remote: release refs with any commit count must pass, and a
+ref without a version or commit, a commit without `elements/freedesktop-sdk.bst`,
+a commit that does not exist and a junction without a full ref must fail. It
+needs no network. `just validate` runs both.

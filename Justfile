@@ -43,6 +43,12 @@ bst *ARGS:
 # PORT, instance and web-administration settings before it touches persistent
 # state, it must hand the shared startup library this appliance's paths and
 # options, and instance-isolation.sh's refusal matcher must fail closed.
+#
+# tests/source-pins.sh reads the FSDK release from the pinned fsdk-containers
+# commit with scripts/fsdk-pin.sh, the same script publishing labels the image
+# with, so a junction bump that publishing could not label fails here instead
+# of on main. tests/source-pins-test.sh first proves it still rejects such a
+# commit, against a local remote. FSDK_CONTAINERS_REMOTE overrides the remote.
 validate:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -52,6 +58,8 @@ validate:
     tests/entrypoint-refusal-helper.sh
     tests/fsdk-contract-test.sh
     tests/runtime-parent.sh
+    tests/source-pins-test.sh
+    tests/source-pins.sh
     names="$(just bst show --deps all --format '%{name}' oci/ps-printer-app.bst)"
     printf '%s\n' "$names" | tests/fsdk-contract.sh --graph -
 

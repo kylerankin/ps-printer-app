@@ -56,12 +56,11 @@ jobs:
           # so a bare fsdk-containers ref bump is a complete update.
           junction_ref="$(sed -n -E 's/^[[:space:]]*ref: (.*-g)?([0-9a-f]{40})$/\2/p' elements/fsdk-containers.bst)"
           [[ "$junction_ref" =~ ^[0-9a-f]{40}$ ]]
-          upstream="$(mktemp -d)"
-          trap 'rm -rf "$upstream"' EXIT
-          git -C "$upstream" init -q
-          git -C "$upstream" fetch -q --depth=1 https://github.com/projectbluefin/fsdk-containers.git "$junction_ref"
-          junction="$(git -C "$upstream" show FETCH_HEAD:elements/freedesktop-sdk.bst)"
-          read -r fsdk_version fsdk_ref <<< "$(sed -n 's/^[[:space:]]*ref: freedesktop-sdk-\(.*\)-0-g\([0-9a-f]\{40\}\)$/\1 \2/p' <<< "$junction")"
+          # The same script `just validate` checks the pin with (tests/source-pins.sh),
+          # so a junction bump that merged can be labelled here.
+          # Assign first: a failure inside a here-string's $(...) would not stop set -e.
+          fsdk_pin="$(scripts/fsdk-pin.sh "$junction_ref")"
+          read -r fsdk_version fsdk_ref <<< "$fsdk_pin"
           [[ -n "$fsdk_version" && "$fsdk_ref" =~ ^[0-9a-f]{40}$ ]]
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           image="${image%/*}/ps-printer-app"
