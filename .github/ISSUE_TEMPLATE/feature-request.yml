@@ -57,7 +57,7 @@ body:
     id: automation-preference
     attributes:
       label: "Automation preference"
-      description: "Choose who may work on this request. With Human interaction only, maintainers keep the needs-human label on it, so agents never pick it up."
+      description: "Choose how you want this request handled. If you choose Human interaction only, the needs-human label stays on it, so agents never pick it up. Otherwise it is removed automatically when the issue is filed."
       options:
         - "Human interaction only"
         - "Machine analysis is welcome"
