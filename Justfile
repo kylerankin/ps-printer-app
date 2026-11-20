@@ -58,6 +58,7 @@ validate:
     tests/entrypoint-refusal-helper.sh
     tests/fsdk-contract-test.sh
     tests/runtime-parent.sh
+    tests/prepare-parent.sh
     tests/source-pins-test.sh
     tests/source-pins.sh
     names="$(just bst show --deps all --format '%{name}' oci/ps-printer-app.bst)"
@@ -77,7 +78,21 @@ fetch:
 
 # Fetch and authenticate the runtime for the pinned junction before building.
 prepare-parent:
-    bash scripts/fetch-runtime-parent.sh
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The shared printing runtime layer is pulled and verified over the network,
+    # which flakes on GitHub's ARM runners. Retry it a few times before failing
+    # the release, exactly like the `fetch` target retries `bst source fetch`.
+    # PARENT_RETRY_DELAY sets the seconds between attempts (0 in the test); the
+    # default of 15 keeps a real failure from hammering the registry.
+    for attempt in 1 2 3; do
+        if bash scripts/fetch-runtime-parent.sh; then
+            exit 0
+        fi
+        echo "prepare-parent fetch failed (attempt ${attempt}/3)" >&2
+        if [[ "$attempt" -lt 3 ]]; then sleep "${PARENT_RETRY_DELAY:-15}"; fi
+    done
+    exit 1
 
 build:
     #!/usr/bin/env bash
