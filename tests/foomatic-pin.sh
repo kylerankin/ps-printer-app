@@ -495,8 +495,10 @@ note "  ok: the PIN-protected job reached the completed state"
 "$runtime" logs "$name" >>"$diagnostics" 2>&1 ||
   fail "could not read the container log of $name"
 for secret in "$pin_value" "$usercode_value"; do
-  if grep -aFq -- "$secret" "$diagnostics"; then
-    grep -anF -- "$secret" "$diagnostics" >&2 || true
+  # Match whole words only: the 4 and 8 digit secrets would otherwise hit
+  # digits inside random values such as the service cookie in the startup line.
+  if grep -aFwq -- "$secret" "$diagnostics"; then
+    grep -anFw -- "$secret" "$diagnostics" >&2 || true
     fail "the job secret $secret is written to the application diagnostics"
   fi
 done
