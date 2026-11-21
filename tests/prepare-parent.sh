@@ -5,15 +5,13 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/scripts"
 cp "$root/Justfile" "$tmp/Justfile"
-export CALLS="$tmp/calls" COUNT="$tmp/count"
-: > "$CALLS"
+export COUNT="$tmp/count"
 echo 0 > "$COUNT"
 
 # A fetch that fails the first $FAIL_TIMES calls then succeeds, so this proves
 # the prepare-parent target retries instead of failing on the first try.
 cat > "$tmp/scripts/fetch-runtime-parent.sh" <<'EOF'
 #!/usr/bin/env bash
-echo called >> "$CALLS"
 count=$(cat "$COUNT" 2>/dev/null || echo 0)
 count=$((count + 1))
 echo "$count" > "$COUNT"
